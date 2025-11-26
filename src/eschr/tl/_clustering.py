@@ -270,7 +270,7 @@ def run_base_clustering(args_in):
     args_in : zip
         List containing each hyperparameter required for one round of
         clustering (k, la_res, metric, subsample_size) as well as the 
-        sparse boolean and the path to the zarr data store.
+        sparse boolean, the path to the zarr data store, and use_rep.
 
     Returns
     -------
@@ -285,6 +285,7 @@ def run_base_clustering(args_in):
         hyperparams_ls = args_in[1]
         sparse = args_in[2]
         reduction = args_in[3]
+        use_rep = args_in[4] if len(args_in) > 4 else 'X'
             
         z1 = zarr.open(zarr_loc, mode="r")
 
@@ -338,6 +339,9 @@ def run_base_clustering(args_in):
         ## Data subspace feature extraction
         if reduction.lower() == 'pca':
             data = run_pca_dim_reduction(data)
+        elif reduction.lower() == 'precomputed':
+            # Data is already in reduced space, use as-is
+            pass
         ## Run leiden clustering
         clusters = run_la_clustering(
             X=data, k=iter_k, la_res=la_res / 100, metric=metric

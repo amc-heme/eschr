@@ -4,7 +4,7 @@ import warnings
 import zarr
 from scipy.sparse import coo_matrix
 
-def make_zarr_sparse(adata, zarr_loc):
+def make_zarr_sparse(adata, zarr_loc, data=None):
     """
     Make zarr data store.
 
@@ -14,6 +14,8 @@ def make_zarr_sparse(adata, zarr_loc):
         AnnData object containing preprocessed data to be clustered in slot `.X`
     zarr_loc : str
         Path to save zarr store which will hold the data to be clustered.
+    data : array-like, optional
+        Data to store. If None, uses adata.X.
     """
     print("making new zarr")
     if zarr_loc == None:
@@ -21,7 +23,9 @@ def make_zarr_sparse(adata, zarr_loc):
     # Create or open the Zarr store
     z1 = zarr.open(zarr_loc, mode="w")
 
-    data = coo_matrix(adata.X)
+    if data is None:
+        data = adata.X
+    data = coo_matrix(data)
     X = z1.create_group("X")
     data_row = X.create_dataset(
         name="row", shape=data.row.shape, chunks=False, dtype="int32", overwrite=True
@@ -41,7 +45,7 @@ def make_zarr_sparse(adata, zarr_loc):
     data_data[:] = data.data
 
 
-def make_zarr_dense(adata, zarr_loc):
+def make_zarr_dense(adata, zarr_loc, data=None):
     """
     Make zarr data store.
 
@@ -51,6 +55,8 @@ def make_zarr_dense(adata, zarr_loc):
         AnnData object containing preprocessed data to be clustered in slot `.X`
     zarr_loc : str
         Path to save zarr store which will hold the data to be clustered.
+    data : array-like, optional
+        Data to store. If None, uses adata.X.
     """
     print("making new zarr")
     if zarr_loc == None:
@@ -58,10 +64,13 @@ def make_zarr_dense(adata, zarr_loc):
     # Create or open the Zarr store
     z1 = zarr.open(zarr_loc, mode="w")
 
-    row_chunks = min(5000, adata.X.shape[0])
-    col_chunks = min(5000, adata.X.shape[1])
+    if data is None:
+        data = adata.X
+    
+    row_chunks = min(5000, data.shape[0])
+    col_chunks = min(5000, data.shape[1])
     chunks = (row_chunks, col_chunks)
-    shape = (adata.X.shape[0], adata.X.shape[1])
+    shape = (data.shape[0], data.shape[1])
 
     # Create the Zarr dataset
     zarr_dataset = z1.create_dataset("X", shape=shape, chunks=chunks, dtype="float32")
@@ -69,7 +78,7 @@ def make_zarr_dense(adata, zarr_loc):
     # Write the data to Zarr in chunks
     for i in range(0, shape[0], chunks[0]):
         # Generate or load a chunk of data
-        chunk_data = adata.X[
+        chunk_data = data[
             i : i + chunks[0], :
         ]  # For example, replace with your actual data
 

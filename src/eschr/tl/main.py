@@ -125,7 +125,7 @@ def parmap(f, X, nprocs=1):
 
 
 def ensemble(
-    zarr_loc, reduction, metric, ensemble_size, k_range, la_res_range, nprocs, sparse
+    zarr_loc, reduction, metric, ensemble_size, k_range, la_res_range, nprocs, sparse, use_rep='X'
 ):
     """
     Run ensemble of clusterings.
@@ -134,8 +134,9 @@ def ensemble(
     ----------
     zarr_loc : str
         Path to save zarr store which will hold the data to be clustered.
-    reduction : {'all', ‘pca’}
-        Which method to use for feature extraction, or `all` for use all features. 
+    reduction : {'all', 'pca', 'precomputed'}
+        Which method to use for feature extraction, or `all` for use all features.
+        Use 'precomputed' when working with user-supplied dimensional reduction.
         Currently only PCA is supported, but alternative options will be added in 
         future releases.
     metric : {'euclidean', 'cosine', None}
@@ -158,6 +159,8 @@ def ensemble(
         cores detected and specified number of processes is set as final value.
     sparse : bool, default=None
         Whether the zarr store contains a sparse matrix or not.
+    use_rep : str, default='X'
+        Which representation is being used ('X' or key from adata.obsm).
 
     Returns
     -------
@@ -174,7 +177,8 @@ def ensemble(
     ]
     sparse_iterator = repeat(sparse, ensemble_size)
     reduction_iterator = repeat(reduction, ensemble_size)
-    args = list(zip(data_iterator, hyperparam_iterator, sparse_iterator, reduction_iterator))
+    use_rep_iterator = repeat(use_rep, ensemble_size)
+    args = list(zip(data_iterator, hyperparam_iterator, sparse_iterator, reduction_iterator, use_rep_iterator))
 
     print("Starting ensemble clustering multiprocess")
     out = parmap(run_base_clustering, args, nprocs=nprocs)
@@ -254,6 +258,7 @@ def consensus(n, bg, nprocs):
 def consensus_cluster(
     adata,
     zarr_loc,
+    use_rep='X',
     reduction="pca",
     metric=None,  # how to add options?
     ensemble_size=150,
@@ -279,13 +284,18 @@ def consensus_cluster(
         AnnData object containing preprocessed data to be clustered in slot `.X`
     zarr_loc : str
         Path to save zarr store which will hold the data to be clustered.
-    reduction : {'all', ‘pca’}
+    use_rep : str, default='X'
+        Which representation to use for clustering. Use 'X' for raw data from
+        `adata.X`, or specify a key from `adata.obsm` (e.g., 'X_pca', 'X_harmony',
+        'X_scvi') to use a pre-computed dimensional reduction. When using a
+        pre-computed reduction, the `reduction` parameter is ignored.
+    reduction : {'all', 'pca'}
         Which method to use for feature extraction/selection/dimensionality
-        reduction, or `all` for use all features. Currently only PCA is
-        supported, but alternative options will be added in future releases.
-        Once other options are added, the default will be to randomly select
-        a reduction for each ensemble member. For datasets with fewer than
-        10 features, all features are used.
+        reduction, or `all` for use all features. Only used when `use_rep='X'`.
+        Currently only PCA is supported, but alternative options will be added
+        in future releases. Once other options are added, the default will be
+        to randomly select a reduction for each ensemble member. For datasets
+        with fewer than 10 features, all features are used.
     metric : {'euclidean', 'cosine', None}
         Metric used for neighborhood graph construction. Can be "euclidean",
         "cosine", or `None`. Default is `None`, in which case the metric is
@@ -320,11 +330,25 @@ def consensus_cluster(
     nprocs = min(int(nprocs), multiprocessing.cpu_count())
     print("Multiprocessing will use " + str(nprocs) + " cores")
 
+    # Get data representation to use
+    if use_rep == 'X':
+        data_to_store = adata.X
+    else:
+        if use_rep not in adata.obsm:
+            raise ValueError(
+                f"use_rep='{use_rep}' not found in adata.obsm. "
+                f"Available keys: {list(adata.obsm.keys())}"
+            )
+        data_to_store = adata.obsm[use_rep]
+        print(f"Using pre-computed representation from adata.obsm['{use_rep}']")
+        # Pre-computed reductions are typically dense, skip PCA
+        reduction = 'precomputed'
+    
     # Test sparseness
-    if (isinstance(adata.X, csr_matrix)) or (isinstance(adata.X, coo_matrix)):
+    if (isinstance(data_to_store, csr_matrix)) or (isinstance(data_to_store, coo_matrix)):
         sparse = True
     else:
-        sparsity = 1.0 - np.count_nonzero(adata.X) / adata.X.size
+        sparsity = 1.0 - np.count_nonzero(data_to_store) / data_to_store.size
         if sparsity > 0.1:
             sparse = True
         else:
@@ -335,9 +359,9 @@ def consensus_cluster(
     if os.path.exists(zarr_loc) == False:
         print("making zarr")
         if sparse:
-            make_zarr_sparse(adata, zarr_loc)
+            make_zarr_sparse(adata, zarr_loc, data=data_to_store)
         else:
-            make_zarr_dense(adata, zarr_loc)
+            make_zarr_dense(adata, zarr_loc, data=data_to_store)
 
     # Generate ensemble of base clusterings
     k_range = (int(k_range[0]), int(k_range[1]))
@@ -354,6 +378,7 @@ def consensus_cluster(
         la_res_range=la_res_range,
         nprocs=nprocs,
         sparse=sparse,
+        use_rep=use_rep,
     )
 
     # Obtain consensus from ensemble
